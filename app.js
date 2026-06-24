@@ -160,6 +160,68 @@ function renderHistory() {
   app().innerHTML = `<section class="card"><h2>История</h2>${state.history.length ? state.history.map(h => `<div class="history-row"><div><strong>${esc(h.title)}</strong><br><span class="muted">${esc(h.period || '')} • ${esc(h.date)}</span></div><strong>${h.percent}%</strong></div>`).join('') : '<p>Пока нет сохраненных результатов.</p>'}</section>`;
 }
 
+
+function notificationsSupported() {
+  return 'Notification' in window;
+}
+function notificationStatusText() {
+  if (!notificationsSupported()) return 'Уведомления не поддерживаются этим браузером';
+  if (Notification.permission === 'granted') return 'Уведомления разрешены';
+  if (Notification.permission === 'denied') return 'Уведомления запрещены в настройках браузера/телефона';
+  return 'Разрешение ещё не запрошено';
+}
+function notificationStatusClass() {
+  if (!notificationsSupported()) return 'bad';
+  if (Notification.permission === 'granted') return 'good';
+  if (Notification.permission === 'denied') return 'bad';
+  return 'neutral';
+}
+async function requestNotifications() {
+  if (!notificationsSupported()) {
+    alert('Этот браузер не поддерживает уведомления. На Android лучше открыть установленное приложение через Chrome.');
+    renderSettings();
+    return;
+  }
+  try {
+    const result = await Notification.requestPermission();
+    state.settings.notifications = result;
+    save();
+    renderSettings();
+    if (result === 'granted') alert('Уведомления разрешены. Теперь нажми «Отправить тестовое уведомление».');
+    if (result === 'denied') alert('Уведомления запрещены. Разрешение можно включить в настройках сайта/приложения в Chrome.');
+  } catch (e) {
+    alert('Не удалось запросить разрешение на уведомления: ' + e.message);
+  }
+}
+async function sendTestNotification() {
+  if (!notificationsSupported()) {
+    alert('Уведомления не поддерживаются этим браузером.');
+    return;
+  }
+  if (Notification.permission !== 'granted') {
+    alert('Сначала нажми «Разрешить уведомления».');
+    return;
+  }
+  const title = 'Деловой день';
+  const options = {
+    body: 'Проверка уведомлений работает',
+    icon: 'icon-192.png',
+    badge: 'icon-192.png',
+    tag: 'delovoy-den-test',
+    renotify: true
+  };
+  try {
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      const reg = await navigator.serviceWorker.ready;
+      await reg.showNotification(title, options);
+    } else {
+      new Notification(title, options);
+    }
+  } catch (e) {
+    alert('Не удалось отправить тестовое уведомление: ' + e.message);
+  }
+}
+
 function renderSettings() {
   app().innerHTML = `<section class="card"><h2>Настройки</h2>
   <div class="field"><label>Тема оформления</label><div class="theme-toggle"><button class="theme-option ${state.settings.theme === 'dark' ? 'active' : ''}" onclick="setTheme('dark')">Темная</button><button class="theme-option ${state.settings.theme === 'light' ? 'active' : ''}" onclick="setTheme('light')">Светлая</button></div></div>
@@ -170,9 +232,10 @@ function renderSettings() {
   <div class="field"><label>Когда делать месячный отчёт</label><select onchange="state.settings.monthDay=this.value;save();renderSettings()">${monthDayOptions()}</select></div>
   <div class="field"><label>Время месячного отчёта</label><input type="time" value="${state.settings.monthReportTime || '19:00'}" onchange="state.settings.monthReportTime=this.value; save(); renderSettings()"></div>
   <div class="summary-box"><strong>Еженедельный обзор:</strong><br>${weekReportLabel()}<br><br><strong>Месячный отчёт:</strong><br>${monthReportLabel()}</div>
-  <div class="install-box"><strong>PWA-режим подготовлен.</strong><br>Чтобы установить на экран телефона, приложение нужно открыть через ссылку/хостинг, а не только как файл. После этого в браузере появится действие «Добавить на главный экран».</div>
+  <div class="notification-box"><strong>Проверка уведомлений</strong><br><span class="status-pill ${notificationStatusClass()}">${notificationStatusText()}</span><div class="actions inline-actions"><button class="secondary-btn" onclick="requestNotifications()">Разрешить уведомления</button><button class="primary-btn" onclick="sendTestNotification()">Отправить тестовое уведомление</button></div><p>На Android проверяй уведомления из установленного приложения. Если уведомление не пришло, проверь разрешения Chrome/приложения в настройках телефона.</p></div>
+  <div class="install-box"><strong>PWA-режим активен.</strong><br>Если приложение уже добавлено на главный экран, после обновления файлов на GitHub Pages открой его заново. Иногда Android берёт новую версию через 1–2 минуты.</div>
   <div class="actions"><button class="secondary-btn" onclick="exportData()">Скачать резервную копию данных</button><button class="danger-btn" onclick="resetApp()">Сбросить прототип</button></div>
-  <p>В этой версии заложены файлы PWA: manifest, service worker и иконки. Реальные push-уведомления добавим следующим этапом.</p></section>`;
+  <p>Версия 0.3 добавляет проверку разрешений и тестовое уведомление. Регулярные уведомления по расписанию — следующий отдельный этап.</p></section>`;
 }
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], {type: 'application/json'});

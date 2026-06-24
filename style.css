@@ -235,3 +235,27 @@ body.light-theme .mini {
 body.light-theme .hero-card {
   background: linear-gradient(145deg, #fff7e6, #ffffff);
 }
+
+.notification-box {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255,255,255,.05);
+  line-height: 1.45;
+}
+.status-pill {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.status-pill.good { background: rgba(73,199,138,.16); color: var(--green); }
+.status-pill.bad { background: rgba(255,119,119,.16); color: var(--danger); }
+.status-pill.neutral { background: var(--gold-soft); color: var(--gold); }
+.inline-actions { grid-template-columns: 1fr; }
+@media (min-width: 380px) {
+  .inline-actions { grid-template-columns: 1fr 1fr; }
+}
