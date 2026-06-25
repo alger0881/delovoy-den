@@ -259,3 +259,30 @@ body.light-theme .hero-card {
 @media (min-width: 380px) {
   .inline-actions { grid-template-columns: 1fr 1fr; }
 }
+
+
+.reminder-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.reminder-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.reminder-row:last-child { border-bottom: 0; }
+.reminder-row strong { color: var(--text); text-align: right; }
+.switch-line {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  color: var(--text) !important;
+}
+.switch-line input {
+  width: auto;
+  transform: scale(1.2);
+}

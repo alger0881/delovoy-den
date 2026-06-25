@@ -35,6 +35,8 @@ function ensureState() {
   if (!state.settings.monthReportTime) state.settings.monthReportTime = state.settings.month || '19:00';
   if (!state.settings.weekDay) state.settings.weekDay = 'sunday';
   if (!state.settings.week) state.settings.week = '18:00';
+  if (state.settings.remindersEnabled === undefined) state.settings.remindersEnabled = true;
+  state.reminderLog = state.reminderLog || {};
 }
 
 function save() { localStorage.setItem('delovoyDenState', JSON.stringify(state)); }
@@ -187,7 +189,7 @@ async function requestNotifications() {
     state.settings.notifications = result;
     save();
     renderSettings();
-    if (result === 'granted') alert('Уведомления разрешены. Теперь нажми «Отправить тестовое уведомление».');
+    if (result === 'granted') { startReminderEngine(); alert('Уведомления разрешены. Теперь нажми «Отправить тестовое уведомление» или проверь расписание напоминаний.'); }
     if (result === 'denied') alert('Уведомления запрещены. Разрешение можно включить в настройках сайта/приложения в Chrome.');
   } catch (e) {
     alert('Не удалось запросить разрешение на уведомления: ' + e.message);
@@ -222,20 +224,147 @@ async function sendTestNotification() {
   }
 }
 
+const reminderTitles = {
+  morning: 'Пора пройти утренний чек-лист',
+  evening: 'Пора подвести итоги дня',
+  week: 'Пора провести контроль недели',
+  month: 'Пора подвести итоги месяца'
+};
+let reminderTimer = null;
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function hhmm(date) { return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`; }
+function dateKeyLocal(date = new Date()) { return `${date.getFullYear()}-${pad2(date.getMonth()+1)}-${pad2(date.getDate())}`; }
+function minutesOf(time) { const [h, m] = String(time || '00:00').split(':').map(Number); return h * 60 + m; }
+function dayIndex(value) {
+  return {sunday:0, monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6}[value] ?? 0;
+}
+function lastDayOfMonth(year, monthIndex) { return new Date(year, monthIndex + 1, 0).getDate(); }
+function scheduledMonthDay(date = new Date()) {
+  const setting = state.settings.monthDay || 'last';
+  const last = lastDayOfMonth(date.getFullYear(), date.getMonth());
+  if (setting === 'last') return last;
+  return Math.min(Number(setting) || last, last);
+}
+function nextDailyDate(time) {
+  const now = new Date();
+  const [h, m] = String(time || '00:00').split(':').map(Number);
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h || 0, m || 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next;
+}
+function nextWeeklyDate(dayValue, time) {
+  const now = new Date();
+  const [h, m] = String(time || '00:00').split(':').map(Number);
+  const target = dayIndex(dayValue);
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h || 0, m || 0, 0, 0);
+  const diff = (target - now.getDay() + 7) % 7;
+  next.setDate(next.getDate() + diff);
+  if (next <= now) next.setDate(next.getDate() + 7);
+  return next;
+}
+function nextMonthlyDate(dayValue, time) {
+  const now = new Date();
+  const [h, m] = String(time || '00:00').split(':').map(Number);
+  let year = now.getFullYear();
+  let month = now.getMonth();
+  function build(y, mo) {
+    const last = lastDayOfMonth(y, mo);
+    const day = dayValue === 'last' ? last : Math.min(Number(dayValue) || last, last);
+    return new Date(y, mo, day, h || 0, m || 0, 0, 0);
+  }
+  let next = build(year, month);
+  if (next <= now) {
+    month += 1;
+    if (month > 11) { month = 0; year += 1; }
+    next = build(year, month);
+  }
+  return next;
+}
+function formatReminderDate(date) {
+  return new Intl.DateTimeFormat('ru-RU', { day:'numeric', month:'long', hour:'2-digit', minute:'2-digit' }).format(date);
+}
+function nextReminderRows() {
+  return [
+    ['Утро', nextDailyDate(state.settings.morning || '08:00')],
+    ['Вечер', nextDailyDate(state.settings.evening || '21:30')],
+    ['Неделя', nextWeeklyDate(state.settings.weekDay || 'sunday', state.settings.week || '18:00')],
+    ['Месяц', nextMonthlyDate(state.settings.monthDay || 'last', state.settings.monthReportTime || '19:00')]
+  ].map(([label, date]) => `<div class="reminder-row"><span>${label}</span><strong>${formatReminderDate(date)}</strong></div>`).join('');
+}
+async function showAppNotification(key, body) {
+  if (!state.settings.remindersEnabled) return;
+  if (!notificationsSupported() || Notification.permission !== 'granted') return;
+  const options = { body, icon: 'icon-192.png', badge: 'icon-192.png', tag: `delovoy-den-${key}`, renotify: true };
+  try {
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      const reg = await navigator.serviceWorker.ready;
+      await reg.showNotification('Деловой день', options);
+    } else {
+      new Notification('Деловой день', options);
+    }
+  } catch (e) {
+    console.warn('Reminder notification failed', e);
+  }
+}
+function shouldSendNow(type, targetMinutes, periodKey) {
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const windowMinutes = 5;
+  const due = nowMinutes >= targetMinutes && nowMinutes < targetMinutes + windowMinutes;
+  const logKey = `${type}:${periodKey}`;
+  if (!due || state.reminderLog[logKey]) return false;
+  state.reminderLog[logKey] = new Date().toISOString();
+  save();
+  return true;
+}
+function checkScheduledReminders() {
+  if (!state.settings.remindersEnabled) return;
+  const now = new Date();
+  const dayKey = dateKeyLocal(now);
+  if (shouldSendNow('morning', minutesOf(state.settings.morning || '08:00'), dayKey)) showAppNotification('morning', reminderTitles.morning);
+  if (shouldSendNow('evening', minutesOf(state.settings.evening || '21:30'), dayKey)) showAppNotification('evening', reminderTitles.evening);
+  if (now.getDay() === dayIndex(state.settings.weekDay || 'sunday')) {
+    if (shouldSendNow('week', minutesOf(state.settings.week || '18:00'), currentPeriodKey('week'))) showAppNotification('week', reminderTitles.week);
+  }
+  if (now.getDate() === scheduledMonthDay(now)) {
+    if (shouldSendNow('month', minutesOf(state.settings.monthReportTime || '19:00'), currentPeriodKey('month'))) showAppNotification('month', reminderTitles.month);
+  }
+}
+function startReminderEngine() {
+  if (reminderTimer) clearInterval(reminderTimer);
+  reminderTimer = setInterval(checkScheduledReminders, 30000);
+  checkScheduledReminders();
+}
+function toggleRemindersEnabled(value) {
+  state.settings.remindersEnabled = value;
+  save();
+  startReminderEngine();
+  renderSettings();
+}
+function reminderEngineStatus() {
+  if (!state.settings.remindersEnabled) return 'Расписание выключено';
+  if (!notificationsSupported()) return 'Браузер не поддерживает уведомления';
+  if (Notification.permission !== 'granted') return 'Расписание готово, но нужно разрешить уведомления';
+  return 'Расписание включено. Проверка идёт, пока приложение открыто или работает в фоне.';
+}
+
+
 function renderSettings() {
   app().innerHTML = `<section class="card"><h2>Настройки</h2>
   <div class="field"><label>Тема оформления</label><div class="theme-toggle"><button class="theme-option ${state.settings.theme === 'dark' ? 'active' : ''}" onclick="setTheme('dark')">Темная</button><button class="theme-option ${state.settings.theme === 'light' ? 'active' : ''}" onclick="setTheme('light')">Светлая</button></div></div>
-  <div class="field"><label>Утреннее напоминание</label><input type="time" value="${state.settings.morning}" onchange="state.settings.morning=this.value;save()"></div>
-  <div class="field"><label>Вечернее напоминание</label><input type="time" value="${state.settings.evening}" onchange="state.settings.evening=this.value;save()"></div>
-  <div class="field"><label>День еженедельного обзора</label><select onchange="state.settings.weekDay=this.value;save();renderSettings()">${weekDayOptions()}</select></div>
-  <div class="field"><label>Время еженедельного обзора</label><input type="time" value="${state.settings.week}" onchange="state.settings.week=this.value;save();renderSettings()"></div>
-  <div class="field"><label>Когда делать месячный отчёт</label><select onchange="state.settings.monthDay=this.value;save();renderSettings()">${monthDayOptions()}</select></div>
-  <div class="field"><label>Время месячного отчёта</label><input type="time" value="${state.settings.monthReportTime || '19:00'}" onchange="state.settings.monthReportTime=this.value; save(); renderSettings()"></div>
+  <div class="field"><label>Утреннее напоминание</label><input type="time" value="${state.settings.morning}" onchange="state.settings.morning=this.value;save();startReminderEngine();renderSettings()"></div>
+  <div class="field"><label>Вечернее напоминание</label><input type="time" value="${state.settings.evening}" onchange="state.settings.evening=this.value;save();startReminderEngine();renderSettings()"></div>
+  <div class="field"><label>День еженедельного обзора</label><select onchange="state.settings.weekDay=this.value;save();startReminderEngine();renderSettings()">${weekDayOptions()}</select></div>
+  <div class="field"><label>Время еженедельного обзора</label><input type="time" value="${state.settings.week}" onchange="state.settings.week=this.value;save();startReminderEngine();renderSettings()"></div>
+  <div class="field"><label>Когда делать месячный отчёт</label><select onchange="state.settings.monthDay=this.value;save();startReminderEngine();renderSettings()">${monthDayOptions()}</select></div>
+  <div class="field"><label>Время месячного отчёта</label><input type="time" value="${state.settings.monthReportTime || '19:00'}" onchange="state.settings.monthReportTime=this.value; save(); startReminderEngine(); renderSettings()"></div>
   <div class="summary-box"><strong>Еженедельный обзор:</strong><br>${weekReportLabel()}<br><br><strong>Месячный отчёт:</strong><br>${monthReportLabel()}</div>
-  <div class="notification-box"><strong>Проверка уведомлений</strong><br><span class="status-pill ${notificationStatusClass()}">${notificationStatusText()}</span><div class="actions inline-actions"><button class="secondary-btn" onclick="requestNotifications()">Разрешить уведомления</button><button class="primary-btn" onclick="sendTestNotification()">Отправить тестовое уведомление</button></div><p>На Android проверяй уведомления из установленного приложения. Если уведомление не пришло, проверь разрешения Chrome/приложения в настройках телефона.</p></div>
-  <div class="install-box"><strong>PWA-режим активен.</strong><br>Если приложение уже добавлено на главный экран, после обновления файлов на GitHub Pages открой его заново. Иногда Android берёт новую версию через 1–2 минуты.</div>
+  <div class="notification-box"><strong>Уведомления</strong><br><span class="status-pill ${notificationStatusClass()}">${notificationStatusText()}</span><div class="actions inline-actions"><button class="secondary-btn" onclick="requestNotifications()">Разрешить уведомления</button><button class="primary-btn" onclick="sendTestNotification()">Отправить тестовое уведомление</button></div><p>Тестовая кнопка проверяет, может ли установленное приложение показывать уведомления.</p></div>
+  <div class="notification-box"><strong>Напоминания по расписанию</strong><br><span class="status-pill ${state.settings.remindersEnabled && Notification.permission === 'granted' ? 'good' : 'neutral'}">${reminderEngineStatus()}</span><div class="field"><label class="switch-line"><input type="checkbox" ${state.settings.remindersEnabled ? 'checked' : ''} onchange="toggleRemindersEnabled(this.checked)"> Включить расписание напоминаний</label></div><div class="reminder-list">${nextReminderRows()}</div><div class="actions"><button class="secondary-btn" onclick="startReminderEngine();renderSettings()">Обновить расписание</button></div><p>В PWA напоминания работают, когда приложение открыто или Android держит его в фоне. Если телефон полностью выгрузит приложение из памяти, точные уведомления могут не прийти. Для 100% надёжности позже понадобится нативное приложение или серверные push-уведомления.</p></div>
+  <div class="install-box"><strong>PWA-режим активен.</strong><br>После обновления файлов на GitHub Pages открой приложение заново. Если видишь старую версию, открой ссылку с <strong>?v=4</strong> или очисти данные сайта.</div>
   <div class="actions"><button class="secondary-btn" onclick="exportData()">Скачать резервную копию данных</button><button class="danger-btn" onclick="resetApp()">Сбросить прототип</button></div>
-  <p>Версия 0.3 добавляет проверку разрешений и тестовое уведомление. Регулярные уведомления по расписанию — следующий отдельный этап.</p></section>`;
+  <p>Версия 0.4 добавляет расписание напоминаний: утро, вечер, неделя и месяц.</p></section>`;
 }
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], {type: 'application/json'});
@@ -247,4 +376,4 @@ function exportData() {
 function resetApp() { if (!confirm('Сбросить все данные?')) return; localStorage.removeItem('delovoyDenState'); location.reload(); }
 function switchTab(tab) { currentTab = tab; document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab)); if (tab === 'home') renderHome(); if (tab === 'stats') renderStats(); if (tab === 'history') renderHistory(); if (tab === 'settings') renderSettings(); }
 document.querySelectorAll('.nav-btn').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
-setTodayLabel(); applyTheme(); renderHome(); save();
+setTodayLabel(); applyTheme(); startReminderEngine(); renderHome(); save();
