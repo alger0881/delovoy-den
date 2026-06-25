@@ -286,3 +286,11 @@ body.light-theme .hero-card {
   width: auto;
   transform: scale(1.2);
 }
+.manage-list { display: grid; gap: 10px; margin-top: 14px; }
+.manage-row { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px; border:1px solid rgba(255,255,255,.10); border-radius:16px; background:rgba(255,255,255,.04); }
+.light-theme .manage-row { border-color: rgba(20,34,56,.12); background: rgba(10,27,47,.035); }
+.manage-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+.manage-actions select { width:auto; min-width:130px; padding:8px 10px; }
+.mini.wide { width:auto; min-width:auto; padding:8px 10px; border-radius:10px; font-size:12px; }
+.danger-mini { color:#ffb6b6; border-color:rgba(255,120,120,.35); }
+@media (max-width: 520px) { .manage-row { align-items:flex-start; flex-direction:column; } .manage-actions { justify-content:flex-start; } }

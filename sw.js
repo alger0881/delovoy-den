@@ -1,5 +1,5 @@
 const CACHE_NAME = 'delovoy-den-v04';
-const ASSETS = ['./', './index.html', './style.css?v=4.0', './app.js?v=4.0', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+const ASSETS = ['./', './index.html', './style.css?v=5.0', './app.js?v=5.0', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', event => {
   self.skipWaiting();

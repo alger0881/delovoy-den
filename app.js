@@ -37,6 +37,15 @@ function ensureState() {
   if (!state.settings.week) state.settings.week = '18:00';
   if (state.settings.remindersEnabled === undefined) state.settings.remindersEnabled = true;
   state.reminderLog = state.reminderLog || {};
+  state.settings.reminderLastPlan = state.settings.reminderLastPlan || '';
+  state.checklists = state.checklists || {};
+  Object.entries(defaults).forEach(([key, val]) => {
+    if (!state.checklists[key]) {
+      state.checklists[key] = { ...val, items: val.items.map((text, idx) => ({ id: `${key}-${idx}-${Date.now()}`, text, done: false })) };
+    }
+    if (!state.checklists[key].icon) state.checklists[key].icon = val.icon;
+    if (!state.checklists[key].type) state.checklists[key].type = val.type;
+  });
 }
 
 function save() { localStorage.setItem('delovoyDenState', JSON.stringify(state)); }
@@ -44,12 +53,14 @@ function app() { return document.getElementById('app'); }
 function todayKey() { return new Date().toISOString().slice(0,10); }
 function currentPeriodKey(key) {
   const d = new Date();
-  if (key === 'week') {
+  const checklist = state.checklists[key];
+  const type = checklist ? checklist.type : key;
+  if (type === 'week' || key === 'week') {
     const start = new Date(d.getFullYear(), 0, 1);
     const week = Math.ceil((((d - start) / 86400000) + start.getDay() + 1) / 7);
     return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
   }
-  if (key === 'month') return d.toISOString().slice(0,7);
+  if (type === 'month' || key === 'month') return d.toISOString().slice(0,7);
   return todayKey();
 }
 function notesKey(key) { return `${key}:${currentPeriodKey(key)}`; }
@@ -93,6 +104,50 @@ function weekDayOptions() {
   return days.map(([value, label]) => `<option value="${value}" ${state.settings.weekDay === value ? 'selected' : ''}>${label}</option>`).join('');
 }
 
+function checklistKeys() { return Object.keys(state.checklists); }
+function nextIcon(title) { return (String(title || 'Ч').trim()[0] || 'Ч').toUpperCase(); }
+function periodTypeOptions(selected = 'day') {
+  const options = [['day','Ежедневный'], ['week','Еженедельный'], ['month','Ежемесячный']];
+  return options.map(([value,label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
+}
+function periodTypeLabel(type) {
+  return {day:'ежедневный', week:'еженедельный', month:'ежемесячный'}[type] || 'пользовательский';
+}
+function createChecklist() {
+  const title = prompt('Название нового чек-листа', 'Новый чек-лист');
+  if (!title || !title.trim()) return;
+  const type = prompt('Период чек-листа: day, week или month', 'day') || 'day';
+  const normalizedType = ['day','week','month'].includes(type.trim()) ? type.trim() : 'day';
+  const key = `custom-${Date.now()}`;
+  state.checklists[key] = { title: title.trim(), icon: nextIcon(title), type: normalizedType, custom: true, items: [] };
+  save();
+  renderSettings();
+}
+function renameChecklist(key) {
+  const c = state.checklists[key];
+  if (!c) return;
+  const title = prompt('Новое название чек-листа', c.title);
+  if (!title || !title.trim()) return;
+  c.title = title.trim();
+  c.icon = nextIcon(title);
+  save();
+  if (currentChecklist === key) renderChecklist(); else renderSettings();
+}
+function changeChecklistType(key, type) {
+  if (!state.checklists[key]) return;
+  state.checklists[key].type = type;
+  save();
+  renderSettings();
+}
+function deleteChecklist(key) {
+  const protectedKeys = ['morning','evening','week','month'];
+  if (protectedKeys.includes(key)) { alert('Стандартный чек-лист нельзя удалить, но его можно переименовать и изменить пункты.'); return; }
+  if (!confirm('Удалить этот чек-лист?')) return;
+  delete state.checklists[key];
+  save();
+  renderSettings();
+}
+
 function renderHome() {
   currentChecklist = null;
   const all = Object.values(state.checklists);
@@ -120,8 +175,8 @@ function renderChecklist() {
   const c = state.checklists[currentChecklist];
   app().innerHTML = `<button class="back-btn" onclick="switchTab('home')">← Назад</button>
   <section class="card">
-    <h2>${c.title}</h2>
-    <p>Период: ${currentPeriodKey(currentChecklist)} • Выполнено: ${c.items.filter(i => i.done).length} из ${c.items.length} — ${pct(c.items)}%</p>
+    <div class="card-row"><h2>${c.title}</h2><button class="mini wide" onclick="renameChecklist('${currentChecklist}')">Переименовать</button></div>
+    <p>Период: ${currentPeriodKey(currentChecklist)} • ${periodTypeLabel(c.type)} • Выполнено: ${c.items.filter(i => i.done).length} из ${c.items.length} — ${pct(c.items)}%</p>
     <div class="progress-wrap"><div class="progress" style="width:${pct(c.items)}%"></div></div>
     <div style="margin-top:12px">${c.items.map(item => `<div class="item"><button class="checkbox ${item.done ? 'done' : ''}" onclick="toggleItem('${item.id}')">${item.done ? '✓' : ''}</button><span>${esc(item.text)}</span><div class="item-actions"><button class="mini" onclick="editItem('${item.id}')">✎</button><button class="mini" onclick="deleteItem('${item.id}')">×</button></div></div>`).join('')}</div>
     ${reflectionFields(currentChecklist)}
@@ -136,9 +191,11 @@ function textField(label, field, placeholder = '') {
 function reflectionFields(key) {
   if (key === 'morning') return `${textField('3 главные задачи дня', 'top3_today', '1.\n2.\n3.')}`;
   if (key === 'evening') return `${textField('Главный результат дня', 'main_day_result', 'Что было главным результатом?')}${textField('Главный вывод дня', 'main_day_lesson', 'Какой вывод сделал?')}<div class="field"><label>Оценка дня</label><select onchange="setNote('${key}','day_score',this.value)">${[10,9,8,7,6,5,4,3,2,1].map(n => `<option value="${n}" ${getNote(key,'day_score') == n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>${textField('3 главные задачи на завтра', 'top3_tomorrow', '1.\n2.\n3.')}`;
-  if (key === 'week') return `${textField('Главные итоги недели', 'week_results')}${textField('Что улучшить на следующей неделе', 'week_improve')}${textField('3 главные цели следующей недели', 'next_week_goals', '1.\n2.\n3.')}`;
-  if (key === 'month') return `${textField('Главные результаты месяца', 'month_results')}${textField('Главные ошибки месяца', 'month_mistakes')}${textField('Что нужно усилить', 'month_focus')}${textField('3 цели следующего месяца', 'next_month_goals', '1.\n2.\n3.')}`;
-  return '';
+  const c = state.checklists[key];
+  const type = c ? c.type : key;
+  if (key === 'week' || type === 'week') return `${textField('Главные итоги недели', 'week_results')}${textField('Что улучшить на следующей неделе', 'week_improve')}${textField('3 главные цели следующей недели', 'next_week_goals', '1.\n2.\n3.')}`;
+  if (key === 'month' || type === 'month') return `${textField('Главные результаты месяца', 'month_results')}${textField('Главные ошибки месяца', 'month_mistakes')}${textField('Что нужно усилить', 'month_focus')}${textField('3 цели следующего месяца', 'next_month_goals', '1.\n2.\n3.')}`;
+  return `${textField('Заметки к чек-листу', 'custom_notes', 'Что важно зафиксировать?')}`;
 }
 
 function toggleItem(id) { const c = state.checklists[currentChecklist]; const item = c.items.find(i => i.id === id); item.done = !item.done; save(); renderChecklist(); }
@@ -231,6 +288,7 @@ const reminderTitles = {
   month: 'Пора подвести итоги месяца'
 };
 let reminderTimer = null;
+let reminderTimeouts = [];
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function hhmm(date) { return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`; }
@@ -281,21 +339,24 @@ function nextMonthlyDate(dayValue, time) {
   }
   return next;
 }
+function getReminderPlan() {
+  return [
+    { key:'morning', label:'Утро', date: nextDailyDate(state.settings.morning || '08:00'), title: reminderTitles.morning },
+    { key:'evening', label:'Вечер', date: nextDailyDate(state.settings.evening || '21:30'), title: reminderTitles.evening },
+    { key:'week', label:'Неделя', date: nextWeeklyDate(state.settings.weekDay || 'sunday', state.settings.week || '18:00'), title: reminderTitles.week },
+    { key:'month', label:'Месяц', date: nextMonthlyDate(state.settings.monthDay || 'last', state.settings.monthReportTime || '19:00'), title: reminderTitles.month }
+  ];
+}
 function formatReminderDate(date) {
   return new Intl.DateTimeFormat('ru-RU', { day:'numeric', month:'long', hour:'2-digit', minute:'2-digit' }).format(date);
 }
 function nextReminderRows() {
-  return [
-    ['Утро', nextDailyDate(state.settings.morning || '08:00')],
-    ['Вечер', nextDailyDate(state.settings.evening || '21:30')],
-    ['Неделя', nextWeeklyDate(state.settings.weekDay || 'sunday', state.settings.week || '18:00')],
-    ['Месяц', nextMonthlyDate(state.settings.monthDay || 'last', state.settings.monthReportTime || '19:00')]
-  ].map(([label, date]) => `<div class="reminder-row"><span>${label}</span><strong>${formatReminderDate(date)}</strong></div>`).join('');
+  return getReminderPlan().map(item => `<div class="reminder-row"><span>${item.label}</span><strong>${formatReminderDate(item.date)}</strong></div>`).join('');
 }
 async function showAppNotification(key, body) {
-  if (!state.settings.remindersEnabled) return;
-  if (!notificationsSupported() || Notification.permission !== 'granted') return;
-  const options = { body, icon: 'icon-192.png', badge: 'icon-192.png', tag: `delovoy-den-${key}`, renotify: true };
+  if (!state.settings.remindersEnabled) return false;
+  if (!notificationsSupported() || Notification.permission !== 'granted') return false;
+  const options = { body, icon: 'icon-192.png', badge: 'icon-192.png', tag: `delovoy-den-${key}-${Date.now()}`, renotify: true };
   try {
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       const reg = await navigator.serviceWorker.ready;
@@ -303,38 +364,69 @@ async function showAppNotification(key, body) {
     } else {
       new Notification('Деловой день', options);
     }
+    return true;
   } catch (e) {
     console.warn('Reminder notification failed', e);
+    return false;
   }
 }
-function shouldSendNow(type, targetMinutes, periodKey) {
+function reminderLogKey(type, date) {
+  return `${type}:${dateKeyLocal(date)}:${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+function markReminderSent(key) { state.reminderLog[key] = new Date().toISOString(); save(); }
+async function fireReminder(type, body, plannedDate) {
+  const key = reminderLogKey(type, plannedDate || new Date());
+  if (state.reminderLog[key]) return;
+  const ok = await showAppNotification(type, body);
+  if (ok) markReminderSent(key);
+  scheduleExactReminders();
+  if (currentTab === 'settings') renderSettings();
+}
+function clearExactReminderTimeouts() {
+  reminderTimeouts.forEach(id => clearTimeout(id));
+  reminderTimeouts = [];
+}
+function scheduleExactReminders() {
+  clearExactReminderTimeouts();
+  if (!state.settings.remindersEnabled || !notificationsSupported() || Notification.permission !== 'granted') return;
   const now = new Date();
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const windowMinutes = 5;
-  const due = nowMinutes >= targetMinutes && nowMinutes < targetMinutes + windowMinutes;
-  const logKey = `${type}:${periodKey}`;
-  if (!due || state.reminderLog[logKey]) return false;
-  state.reminderLog[logKey] = new Date().toISOString();
-  save();
-  return true;
+  getReminderPlan().forEach(item => {
+    const delay = item.date.getTime() - now.getTime();
+    if (delay > 0 && delay < 2147483647) {
+      const id = setTimeout(() => fireReminder(item.key, item.title, item.date), delay);
+      reminderTimeouts.push(id);
+    }
+  });
 }
 function checkScheduledReminders() {
   if (!state.settings.remindersEnabled) return;
   const now = new Date();
-  const dayKey = dateKeyLocal(now);
-  if (shouldSendNow('morning', minutesOf(state.settings.morning || '08:00'), dayKey)) showAppNotification('morning', reminderTitles.morning);
-  if (shouldSendNow('evening', minutesOf(state.settings.evening || '21:30'), dayKey)) showAppNotification('evening', reminderTitles.evening);
-  if (now.getDay() === dayIndex(state.settings.weekDay || 'sunday')) {
-    if (shouldSendNow('week', minutesOf(state.settings.week || '18:00'), currentPeriodKey('week'))) showAppNotification('week', reminderTitles.week);
-  }
-  if (now.getDate() === scheduledMonthDay(now)) {
-    if (shouldSendNow('month', minutesOf(state.settings.monthReportTime || '19:00'), currentPeriodKey('month'))) showAppNotification('month', reminderTitles.month);
-  }
+  // Широкое окно нужно для Android: если PWA была приторможена в фоне, уведомление придёт при первом пробуждении.
+  const lateWindowMs = 60 * 60 * 1000;
+  getReminderPlan().forEach(item => {
+    const planned = new Date(item.date);
+    // next*Date возвращает будущее. Чтобы поймать сегодняшнее уже наступившее время, строим дату вручную.
+    if (item.key === 'morning') planned.setDate(planned.getDate() - (planned > now ? 1 : 0));
+    if (item.key === 'evening') planned.setDate(planned.getDate() - (planned > now ? 1 : 0));
+    const diff = now.getTime() - planned.getTime();
+    if (diff >= 0 && diff <= lateWindowMs && !state.reminderLog[reminderLogKey(item.key, planned)]) {
+      fireReminder(item.key, item.title, planned);
+    }
+  });
 }
 function startReminderEngine() {
   if (reminderTimer) clearInterval(reminderTimer);
-  reminderTimer = setInterval(checkScheduledReminders, 30000);
+  reminderTimer = setInterval(checkScheduledReminders, 15000);
+  scheduleExactReminders();
   checkScheduledReminders();
+  state.settings.reminderLastPlan = new Date().toLocaleString('ru-RU');
+  save();
+}
+function settingChanged(key, value) {
+  state.settings[key] = value;
+  save();
+  startReminderEngine();
+  renderSettings();
 }
 function toggleRemindersEnabled(value) {
   state.settings.remindersEnabled = value;
@@ -346,25 +438,32 @@ function reminderEngineStatus() {
   if (!state.settings.remindersEnabled) return 'Расписание выключено';
   if (!notificationsSupported()) return 'Браузер не поддерживает уведомления';
   if (Notification.permission !== 'granted') return 'Расписание готово, но нужно разрешить уведомления';
-  return 'Расписание включено. Проверка идёт, пока приложение открыто или работает в фоне.';
+  return 'Расписание включено. Изменения времени применяются автоматически.';
 }
-
+window.addEventListener('focus', checkScheduledReminders);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkScheduledReminders(); });
 
 function renderSettings() {
+  const checklistRows = checklistKeys().map(key => {
+    const c = state.checklists[key];
+    const deleteBtn = c.custom ? `<button class="mini danger-mini" onclick="deleteChecklist('${key}')">Удалить</button>` : '';
+    return `<div class="manage-row"><div><strong>${esc(c.title)}</strong><br><span class="muted">${periodTypeLabel(c.type)} • ${c.items.length} пунктов</span></div><div class="manage-actions"><button class="mini wide" onclick="renameChecklist('${key}')">Переименовать</button><select onchange="changeChecklistType('${key}', this.value)">${periodTypeOptions(c.type)}</select>${deleteBtn}</div></div>`;
+  }).join('');
   app().innerHTML = `<section class="card"><h2>Настройки</h2>
   <div class="field"><label>Тема оформления</label><div class="theme-toggle"><button class="theme-option ${state.settings.theme === 'dark' ? 'active' : ''}" onclick="setTheme('dark')">Темная</button><button class="theme-option ${state.settings.theme === 'light' ? 'active' : ''}" onclick="setTheme('light')">Светлая</button></div></div>
-  <div class="field"><label>Утреннее напоминание</label><input type="time" value="${state.settings.morning}" onchange="state.settings.morning=this.value;save();startReminderEngine();renderSettings()"></div>
-  <div class="field"><label>Вечернее напоминание</label><input type="time" value="${state.settings.evening}" onchange="state.settings.evening=this.value;save();startReminderEngine();renderSettings()"></div>
-  <div class="field"><label>День еженедельного обзора</label><select onchange="state.settings.weekDay=this.value;save();startReminderEngine();renderSettings()">${weekDayOptions()}</select></div>
-  <div class="field"><label>Время еженедельного обзора</label><input type="time" value="${state.settings.week}" onchange="state.settings.week=this.value;save();startReminderEngine();renderSettings()"></div>
-  <div class="field"><label>Когда делать месячный отчёт</label><select onchange="state.settings.monthDay=this.value;save();startReminderEngine();renderSettings()">${monthDayOptions()}</select></div>
-  <div class="field"><label>Время месячного отчёта</label><input type="time" value="${state.settings.monthReportTime || '19:00'}" onchange="state.settings.monthReportTime=this.value; save(); startReminderEngine(); renderSettings()"></div>
+  <div class="field"><label>Утреннее напоминание</label><input type="time" value="${state.settings.morning}" onchange="settingChanged('morning', this.value)"></div>
+  <div class="field"><label>Вечернее напоминание</label><input type="time" value="${state.settings.evening}" onchange="settingChanged('evening', this.value)"></div>
+  <div class="field"><label>День еженедельного обзора</label><select onchange="settingChanged('weekDay', this.value)">${weekDayOptions()}</select></div>
+  <div class="field"><label>Время еженедельного обзора</label><input type="time" value="${state.settings.week}" onchange="settingChanged('week', this.value)"></div>
+  <div class="field"><label>Когда делать месячный отчёт</label><select onchange="settingChanged('monthDay', this.value)">${monthDayOptions()}</select></div>
+  <div class="field"><label>Время месячного отчёта</label><input type="time" value="${state.settings.monthReportTime || '19:00'}" onchange="settingChanged('monthReportTime', this.value)"></div>
   <div class="summary-box"><strong>Еженедельный обзор:</strong><br>${weekReportLabel()}<br><br><strong>Месячный отчёт:</strong><br>${monthReportLabel()}</div>
   <div class="notification-box"><strong>Уведомления</strong><br><span class="status-pill ${notificationStatusClass()}">${notificationStatusText()}</span><div class="actions inline-actions"><button class="secondary-btn" onclick="requestNotifications()">Разрешить уведомления</button><button class="primary-btn" onclick="sendTestNotification()">Отправить тестовое уведомление</button></div><p>Тестовая кнопка проверяет, может ли установленное приложение показывать уведомления.</p></div>
-  <div class="notification-box"><strong>Напоминания по расписанию</strong><br><span class="status-pill ${state.settings.remindersEnabled && Notification.permission === 'granted' ? 'good' : 'neutral'}">${reminderEngineStatus()}</span><div class="field"><label class="switch-line"><input type="checkbox" ${state.settings.remindersEnabled ? 'checked' : ''} onchange="toggleRemindersEnabled(this.checked)"> Включить расписание напоминаний</label></div><div class="reminder-list">${nextReminderRows()}</div><div class="actions"><button class="secondary-btn" onclick="startReminderEngine();renderSettings()">Обновить расписание</button></div><p>В PWA напоминания работают, когда приложение открыто или Android держит его в фоне. Если телефон полностью выгрузит приложение из памяти, точные уведомления могут не прийти. Для 100% надёжности позже понадобится нативное приложение или серверные push-уведомления.</p></div>
-  <div class="install-box"><strong>PWA-режим активен.</strong><br>После обновления файлов на GitHub Pages открой приложение заново. Если видишь старую версию, открой ссылку с <strong>?v=4</strong> или очисти данные сайта.</div>
+  <div class="notification-box"><strong>Напоминания по расписанию</strong><br><span class="status-pill ${state.settings.remindersEnabled && Notification.permission === 'granted' ? 'good' : 'neutral'}">${reminderEngineStatus()}</span><div class="field"><label class="switch-line"><input type="checkbox" ${state.settings.remindersEnabled ? 'checked' : ''} onchange="toggleRemindersEnabled(this.checked)"> Включить расписание напоминаний</label></div><div class="reminder-list">${nextReminderRows()}</div><p>Кнопка «Обновить» убрана: при смене даты или времени расписание пересчитывается автоматически. В PWA Android может задерживать таймеры в фоне; если система притормозит приложение, напоминание придёт при первом пробуждении приложения в течение часа после назначенного времени.</p></div>
+  <div class="notification-box"><strong>Управление чек-листами</strong><div class="actions inline-actions"><button class="primary-btn" onclick="createChecklist()">+ Добавить чек-лист</button></div><div class="manage-list">${checklistRows}</div></div>
+  <div class="install-box"><strong>PWA-режим активен.</strong><br>После обновления файлов на GitHub Pages открой приложение заново. Если видишь старую версию, открой ссылку с <strong>?v=5</strong> или очисти данные сайта.</div>
   <div class="actions"><button class="secondary-btn" onclick="exportData()">Скачать резервную копию данных</button><button class="danger-btn" onclick="resetApp()">Сбросить прототип</button></div>
-  <p>Версия 0.4 добавляет расписание напоминаний: утро, вечер, неделя и месяц.</p></section>`;
+  <p>Версия 0.5: исправлен механизм расписания, настройки применяются автоматически, добавлены новые чек-листы и переименование существующих.</p></section>`;
 }
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], {type: 'application/json'});
