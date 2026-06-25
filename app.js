@@ -435,10 +435,13 @@ function toggleRemindersEnabled(value) {
   renderSettings();
 }
 function reminderEngineStatus() {
-  if (!state.settings.remindersEnabled) return 'Расписание выключено';
+  if (!state.settings.remindersEnabled) return 'Локальные напоминания выключены';
   if (!notificationsSupported()) return 'Браузер не поддерживает уведомления';
-  if (Notification.permission !== 'granted') return 'Расписание готово, но нужно разрешить уведомления';
-  return 'Расписание включено. Изменения времени применяются автоматически.';
+  if (Notification.permission !== 'granted') return 'Нужно разрешить уведомления';
+  return 'Локальные напоминания активны только пока приложение открыто или активно в фоне';
+}
+function settingsSection(title, subtitle, content) {
+  return `<details class="settings-section"><summary><div><strong>${title}</strong><span>${subtitle}</span></div><b>›</b></summary><div class="settings-content">${content}</div></details>`;
 }
 window.addEventListener('focus', checkScheduledReminders);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkScheduledReminders(); });
@@ -449,21 +452,37 @@ function renderSettings() {
     const deleteBtn = c.custom ? `<button class="mini danger-mini" onclick="deleteChecklist('${key}')">Удалить</button>` : '';
     return `<div class="manage-row"><div><strong>${esc(c.title)}</strong><br><span class="muted">${periodTypeLabel(c.type)} • ${c.items.length} пунктов</span></div><div class="manage-actions"><button class="mini wide" onclick="renameChecklist('${key}')">Переименовать</button><select onchange="changeChecklistType('${key}', this.value)">${periodTypeOptions(c.type)}</select>${deleteBtn}</div></div>`;
   }).join('');
-  app().innerHTML = `<section class="card"><h2>Настройки</h2>
-  <div class="field"><label>Тема оформления</label><div class="theme-toggle"><button class="theme-option ${state.settings.theme === 'dark' ? 'active' : ''}" onclick="setTheme('dark')">Темная</button><button class="theme-option ${state.settings.theme === 'light' ? 'active' : ''}" onclick="setTheme('light')">Светлая</button></div></div>
-  <div class="field"><label>Утреннее напоминание</label><input type="time" value="${state.settings.morning}" onchange="settingChanged('morning', this.value)"></div>
-  <div class="field"><label>Вечернее напоминание</label><input type="time" value="${state.settings.evening}" onchange="settingChanged('evening', this.value)"></div>
-  <div class="field"><label>День еженедельного обзора</label><select onchange="settingChanged('weekDay', this.value)">${weekDayOptions()}</select></div>
-  <div class="field"><label>Время еженедельного обзора</label><input type="time" value="${state.settings.week}" onchange="settingChanged('week', this.value)"></div>
-  <div class="field"><label>Когда делать месячный отчёт</label><select onchange="settingChanged('monthDay', this.value)">${monthDayOptions()}</select></div>
-  <div class="field"><label>Время месячного отчёта</label><input type="time" value="${state.settings.monthReportTime || '19:00'}" onchange="settingChanged('monthReportTime', this.value)"></div>
-  <div class="summary-box"><strong>Еженедельный обзор:</strong><br>${weekReportLabel()}<br><br><strong>Месячный отчёт:</strong><br>${monthReportLabel()}</div>
-  <div class="notification-box"><strong>Уведомления</strong><br><span class="status-pill ${notificationStatusClass()}">${notificationStatusText()}</span><div class="actions inline-actions"><button class="secondary-btn" onclick="requestNotifications()">Разрешить уведомления</button><button class="primary-btn" onclick="sendTestNotification()">Отправить тестовое уведомление</button></div><p>Тестовая кнопка проверяет, может ли установленное приложение показывать уведомления.</p></div>
-  <div class="notification-box"><strong>Напоминания по расписанию</strong><br><span class="status-pill ${state.settings.remindersEnabled && Notification.permission === 'granted' ? 'good' : 'neutral'}">${reminderEngineStatus()}</span><div class="field"><label class="switch-line"><input type="checkbox" ${state.settings.remindersEnabled ? 'checked' : ''} onchange="toggleRemindersEnabled(this.checked)"> Включить расписание напоминаний</label></div><div class="reminder-list">${nextReminderRows()}</div><p>Кнопка «Обновить» убрана: при смене даты или времени расписание пересчитывается автоматически. В PWA Android может задерживать таймеры в фоне; если система притормозит приложение, напоминание придёт при первом пробуждении приложения в течение часа после назначенного времени.</p></div>
-  <div class="notification-box"><strong>Управление чек-листами</strong><div class="actions inline-actions"><button class="primary-btn" onclick="createChecklist()">+ Добавить чек-лист</button></div><div class="manage-list">${checklistRows}</div></div>
-  <div class="install-box"><strong>PWA-режим активен.</strong><br>После обновления файлов на GitHub Pages открой приложение заново. Если видишь старую версию, открой ссылку с <strong>?v=5</strong> или очисти данные сайта.</div>
-  <div class="actions"><button class="secondary-btn" onclick="exportData()">Скачать резервную копию данных</button><button class="danger-btn" onclick="resetApp()">Сбросить прототип</button></div>
-  <p>Версия 0.5: исправлен механизм расписания, настройки применяются автоматически, добавлены новые чек-листы и переименование существующих.</p></section>`;
+
+  const themeSection = settingsSection('Оформление', `Текущая тема: ${state.settings.theme === 'dark' ? 'тёмная' : 'светлая'}`, `
+    <div class="field"><label>Тема оформления</label><div class="theme-toggle"><button class="theme-option ${state.settings.theme === 'dark' ? 'active' : ''}" onclick="setTheme('dark')">Темная</button><button class="theme-option ${state.settings.theme === 'light' ? 'active' : ''}" onclick="setTheme('light')">Светлая</button></div></div>
+  `);
+
+  const notificationSection = settingsSection('Уведомления', notificationStatusText(), `
+    <div class="notification-box compact"><strong>Проверка уведомлений</strong><br><span class="status-pill ${notificationStatusClass()}">${notificationStatusText()}</span><div class="actions inline-actions"><button class="secondary-btn" onclick="requestNotifications()">Разрешить уведомления</button><button class="primary-btn" onclick="sendTestNotification()">Отправить тестовое уведомление</button></div><p>Тестовая кнопка проверяет, может ли установленное приложение показывать уведомления.</p></div>
+    <div class="notification-box compact"><strong>Локальные напоминания</strong><br><span class="status-pill ${state.settings.remindersEnabled && notificationsSupported() && Notification.permission === 'granted' ? 'neutral' : 'bad'}">${reminderEngineStatus()}</span><div class="field"><label class="switch-line"><input type="checkbox" ${state.settings.remindersEnabled ? 'checked' : ''} onchange="toggleRemindersEnabled(this.checked)"> Включить локальные напоминания</label></div><div class="reminder-list">${nextReminderRows()}</div><p><strong>Важно:</strong> на Android PWA не может гарантированно отправлять уведомления по таймеру, когда приложение закрыто или выгружено системой. Сейчас напоминания работают, когда приложение открыто или действительно остаётся активным. Для надёжных фоновых напоминаний нужен следующий этап: серверные push-уведомления или Android-приложение.</p></div>
+  `);
+
+  const scheduleSection = settingsSection('Расписание отчётов', `Неделя: ${weekReportLabel()} • Месяц: ${monthReportLabel()}`, `
+    <div class="field"><label>Утреннее напоминание</label><input type="time" value="${state.settings.morning}" onchange="settingChanged('morning', this.value)"></div>
+    <div class="field"><label>Вечернее напоминание</label><input type="time" value="${state.settings.evening}" onchange="settingChanged('evening', this.value)"></div>
+    <div class="field"><label>День еженедельного обзора</label><select onchange="settingChanged('weekDay', this.value)">${weekDayOptions()}</select></div>
+    <div class="field"><label>Время еженедельного обзора</label><input type="time" value="${state.settings.week}" onchange="settingChanged('week', this.value)"></div>
+    <div class="field"><label>Когда делать месячный отчёт</label><select onchange="settingChanged('monthDay', this.value)">${monthDayOptions()}</select></div>
+    <div class="field"><label>Время месячного отчёта</label><input type="time" value="${state.settings.monthReportTime || '19:00'}" onchange="settingChanged('monthReportTime', this.value)"></div>
+    <div class="summary-box"><strong>Еженедельный обзор:</strong><br>${weekReportLabel()}<br><br><strong>Месячный отчёт:</strong><br>${monthReportLabel()}</div>
+    <p>Кнопки «Обновить» больше нет: при смене даты или времени настройки применяются автоматически.</p>
+  `);
+
+  const checklistSection = settingsSection('Управление чек-листами', `${checklistKeys().length} чек-листов`, `
+    <div class="actions inline-actions"><button class="primary-btn" onclick="createChecklist()">+ Добавить чек-лист</button></div><div class="manage-list">${checklistRows}</div>
+  `);
+
+  const dataSection = settingsSection('Данные и резервная копия', 'Экспорт или сброс прототипа', `
+    <div class="install-box"><strong>PWA-режим активен.</strong><br>После обновления файлов на GitHub Pages открой приложение заново. Если видишь старую версию, открой ссылку с <strong>?v=6</strong> или очисти данные сайта.</div>
+    <div class="actions"><button class="secondary-btn" onclick="exportData()">Скачать резервную копию данных</button><button class="danger-btn" onclick="resetApp()">Сбросить прототип</button></div>
+  `);
+
+  app().innerHTML = `<section class="card"><h2>Настройки</h2><p>Разделы закрыты для компактности. Нажми на нужный пункт, чтобы открыть настройки.</p><div class="settings-list">${themeSection}${scheduleSection}${notificationSection}${checklistSection}${dataSection}</div><p>Версия 0.6: настройки переведены в раскрывающийся список разделов; уточнено ограничение PWA-уведомлений в фоне.</p></section>`;
 }
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], {type: 'application/json'});
