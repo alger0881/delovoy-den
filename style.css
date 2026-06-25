@@ -331,3 +331,11 @@ body.light-theme .hero-card {
 }
 .notification-box.compact { background: rgba(255,255,255,.035); }
 body.light-theme .settings-section { background: rgba(16,24,40,.035); }
+
+.save-indicator {
+  margin-top: 12px;
+  color: var(--green);
+  font-size: 13px;
+  text-align: center;
+  opacity: .92;
+}

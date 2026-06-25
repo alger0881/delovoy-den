@@ -180,7 +180,7 @@ function renderChecklist() {
     <div class="progress-wrap"><div class="progress" style="width:${pct(c.items)}%"></div></div>
     <div style="margin-top:12px">${c.items.map(item => `<div class="item"><button class="checkbox ${item.done ? 'done' : ''}" onclick="toggleItem('${item.id}')">${item.done ? '✓' : ''}</button><span>${esc(item.text)}</span><div class="item-actions"><button class="mini" onclick="editItem('${item.id}')">✎</button><button class="mini" onclick="deleteItem('${item.id}')">×</button></div></div>`).join('')}</div>
     ${reflectionFields(currentChecklist)}
-    <div class="actions"><button class="secondary-btn" onclick="addItem()">+ Добавить пункт</button><button class="secondary-btn" onclick="resetChecklist()">Сбросить отметки</button><button class="primary-btn" onclick="completeChecklist()">Сохранить результат</button></div>
+    <div class="actions"><button class="secondary-btn" onclick="addItem()">+ Добавить пункт</button><button class="secondary-btn" onclick="resetChecklist()">Сбросить отметки</button></div><div class="save-indicator">✓ Изменения сохранены</div>
   </section>`;
 }
 
@@ -478,11 +478,11 @@ function renderSettings() {
   `);
 
   const dataSection = settingsSection('Данные и резервная копия', 'Экспорт или сброс прототипа', `
-    <div class="install-box"><strong>PWA-режим активен.</strong><br>После обновления файлов на GitHub Pages открой приложение заново. Если видишь старую версию, открой ссылку с <strong>?v=6</strong> или очисти данные сайта.</div>
+    <div class="install-box"><strong>PWA-режим активен.</strong><br>После обновления файлов на GitHub Pages открой приложение заново. Если видишь старую версию, открой ссылку с <strong>?v=7</strong> или очисти данные сайта.</div>
     <div class="actions"><button class="secondary-btn" onclick="exportData()">Скачать резервную копию данных</button><button class="danger-btn" onclick="resetApp()">Сбросить прототип</button></div>
   `);
 
-  app().innerHTML = `<section class="card"><h2>Настройки</h2><p>Разделы закрыты для компактности. Нажми на нужный пункт, чтобы открыть настройки.</p><div class="settings-list">${themeSection}${scheduleSection}${notificationSection}${checklistSection}${dataSection}</div><p>Версия 0.6: настройки переведены в раскрывающийся список разделов; уточнено ограничение PWA-уведомлений в фоне.</p></section>`;
+  app().innerHTML = `<section class="card"><h2>Настройки</h2><p>Разделы закрыты для компактности. Нажми на нужный пункт, чтобы открыть настройки.</p><div class="settings-list">${themeSection}${scheduleSection}${notificationSection}${checklistSection}${dataSection}</div><p>Версия 0.7: убрана кнопка «Сохранить результат». Чек-листы сохраняются автоматически, внизу отображается «Изменения сохранены».</p></section>`;
 }
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], {type: 'application/json'});
